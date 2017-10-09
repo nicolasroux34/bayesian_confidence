@@ -1,0 +1,361 @@
+---
+title: "Bayesian Confidence"
+author: "Nicolas Roux"
+date: "September 23, 2017"
+output:
+  html_document:
+    theme: readable
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+df <- read.csv("Bayesian_Confidence_Data.txt", header=TRUE,sep="\t")
+library(Rmisc)
+library(ggplot2)
+library(pROC)
+library(dplyr)
+library(ROCR)
+library(boot)
+library(metafor)
+```
+## Introduction
+
+This paper contributes to the literature studying how the feeling of confidence is formed in perceptual tasks. One view of confidence is to think of it as the assessment of one's posterior probability of being correct. These posterior probabilities obtain from applying Bayes rule on noisy evidence generated within a signal detection model. This Bayesian confidence model is used to compare confidence discrimination across subjects with different sensitivities.
+
+The Bayesian confidence model assumes that subjects know how their evidence is generated. If one is to compute the posterior probabilities of competing hypotheses based on some piece of evidence, one has to know how likely the evidence is to arise conditional on each hypothesis.
+
+[^1]: One should also know how likely each hypothesis is to begin with. In this paper there will be two hypothesis equally likely to be true.]
+
+
+If the evidence generating process is to be used to form confidence, it has to be learned from experienced. In a standard perceptive experiment, subjects repeat the same task many times, thereby receiving a substantial sample of evidence. It is conceivable that subjects thereby learn about the evidence generating process and then use this knowledge to interpret subsequent evidence.
+
+This paper tests whether the evidence generating process is learned from experience and used to form confidence in a way consistent with Bayesian updating. To do so, we run two treatments of a signal detection task which involve the same evidence generating processes, but provide subjets with different opportunities to learn about them. 
+
+Both treatments feature weak and strong stimuli so involve two different EGPs. We refer to the EGPs induced by weak and strong stimuli as weak and strong EGP. The two treatments involve, however, a different sequencing of these stimuli. In the separated treatment, subjects first face a series of strong stimuli, and then a series of weak stimuli (or the reverse). In the mixed treatment, the sequence is randomized. 
+
+As a result, the separated treatment provides subjects with an opportunity to learn which EGP produced their evidence and to adjust their confidence accordingly. The mixed treatment on the other hand, does not offer such an opportunity as subjects face a mixture of the two EGPs all along. 
+
+The comparison of confidence reports across treatment makes it possible to test various hypotheses about what subjects learn about the EGP and how this knowledge is used to form confidence. 
+
+# Models
+
+A model of confidence formation has two building blocks: a model of the evidence generating process and an _interpretation curve_, which maps evidence pieces to confidence reports. The interpretation curve is always increasing with respect to the evidence strength. It may or may or may depend on the EGP.
+
+
+We model the EGPs using the standard binormal signal detection model. The weak EGP features normal distributions which are closer to one another than the strong EGP. Our task is symmetric so the normal distributions all have the same variance, which describes a subject's sensitivity.
+
+Our baseline model is the _Naive Confidence_ model, where confidence formation is independent of the EGP, that is the intepretation curve is fixed.
+
+Our central model is the _Bayesian Confidence_ model where each piece of evidence is being interpreted in light of the EGP. The Bayesian confidence model implies that the same piece of evidence induces a larger confidence if it is produced by the strong EGP relative to the weak EGP. SO the interpretation curve becomes steeper as the EGP becomes stronger. 
+
+As pointed out earlier, the interpretation curve can only adjusts to the EGP if subjects are informed about the EGP. We conjecture that the repeated exposure to evidence pieces produced by an EGP makes it possible for subjects to learn about it. The interpretation curve might therefore be unstable among the first trials of an EGP, but will stabilize after a while. 
+
+We consider a third hypothesis. The _Persistent Confidence_ model assumes that confidence formation is affected by recent evidence. Relatively strong recent evidence makes a subject more confident about future evidence. So the intepretation curve would be steeper following a series of strong evidence than following a series of weak evidence. The Bayesian Confidence model also features this dependence to past evidence. The difference is that in the Persitent Confidence model, there is no learning of the EGP. In other words, the interpretation curve never stabilizes, even in a long sequence of trials produced by the same EGP. [^1]
+
+[^1]: One may argue that the _Persistent Confidence_ model is a Bayesian model where subjects have short memory, i.e. only base their knowledge of the EGP on the past, say, 10 evidence pieces. One could even think that subjects do not have short memory but expect the EGP to change and are therefore very sensitive to recent evidence. 
+
+```{r}
+evidence <- seq(-20,20,.01)
+std <- 5
+mean_weak <- 4
+mean_strong <- 9
+weak <- c(rev(sapply(evidence,function(x) dnorm(x,mean_weak,std)))
+                  ,sapply(evidence,function(x) dnorm(x,mean_weak,std)))
+strong <- c(rev(sapply(evidence,function(x) dnorm(x,mean_strong,std)))
+                  ,sapply(evidence,function(x) dnorm(x,mean_strong,std)))
+
+
+
+data_egp <- stack(data.frame(weak,strong))
+names(data_egp) <- c("density","EGP")
+data_egp$evidence <- rep(evidence,4)
+
+
+function_ic_weak <- function(x) {
+  dnorm(abs(x),mean_weak,std)/(dnorm(abs(x),mean_weak,std)+dnorm(abs(x),-mean_weak,std))
+}
+
+function_ic_strong <- function(x) {
+  dnorm(abs(x),mean_strong,std)/(dnorm(abs(x),mean_strong,std)+dnorm(abs(x),-mean_strong,std))
+}
+
+function_ic_mixed <- function(x) {
+  (dnorm(abs(x),mean_strong,std)+ dnorm(abs(x),mean_weak,std) )/(dnorm(abs(x),mean_strong,std)+dnorm(abs(x),-mean_strong,std) +
+    dnorm(abs(x),mean_weak,std)+dnorm(abs(x),-mean_weak,std))
+}
+
+weak <- sapply(evidence,function(x) function_ic_weak(x))
+strong <- sapply(evidence,function(x) function_ic_strong(x))
+mixed <- sapply(evidence,function(x) function_ic_mixed(x))
+
+data_ic <- data.frame(weak,strong,mixed)
+data_ic <- stack(data_ic)
+names(data_ic)<-c("confidence","EGP")
+data_ic$evidence <- rep(evidence,3)
+
+plot_egp <- ggplot(data_egp,aes(evidence, density, color=EGP)) + 
+  geom_point(size=.7) +
+  geom_vline(xintercept=0,linetype="dashed")+
+  geom_hline(yintercept=0,size=1)+
+  scale_y_continuous(limits= c(0,.13))+
+  labs(title="Evidence Generating Process", 
+       x = "",y="Density") + 
+  theme(axis.ticks.x=element_blank(),axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),axis.text.y=element_blank())+
+  annotate("text", x = 10, y = .1, label = "Right Circle")+
+  annotate("text", x = -10, y = .1, label = "Left Circle")
+
+
+plot_ic <- ggplot(data_ic, aes(evidence,confidence,color=EGP)) + 
+  geom_point(size=.5) + scale_color_manual(values=c("firebrick2","turquoise3","black"))+
+  geom_vline(xintercept=0,linetype="dashed")+
+  labs(title="Interpretation Curves \n in the Bayesian Confidence Model", 
+       x = "Evidence",y="Confidence")
+
+  
+multiplot(plot_egp,plot_ic,cols = 1)
+
+```
+
+
+
+# Protocol
+
+Subjects get a glimpse at a screen displaying two circles. Each circle contains a certain count of dots, e.g. 50 in the left circle vs. 53 in the right circle. Subjects do not have time to count the dots, and are asked to guess which circle contained more dots. Once they picked either circle, they are asked to report how confident they feel that their guess was correct. The confidence report is made on a probability scale and is incentivized through the matching probability rule. Each subject performs 200 trials of this task. The spatial distribution of dots is randomized from a trial to another so that subjects never see the same image twice. Due to the variation in the spatial disribution of dots, confidence can vary wildly from a trial to aonother, even though the difference in dots counts between the two circles is the same.
+
+The experiment features trials with a weak stimulus, i.e. the difference in dot counts is low, and trials with a strong stimulus where the difference in dot counts is larger. We will sometimes refer to the former trials as easy and the latter as hard. For instance, a hard trial may involve 50 vs. 53 dots and an easy trial 50 vs. 58 dots. The exact dot count difference was determined on an individual basis to make sure all subjects would be correct with a 60% chance among hard trials and 80% chance among easy trials.
+
+There are two treatments, which differ with respect to how easy and hard trials are sequenced. In the separated treatment, subjects receive a block of a 100 easy trials and then a block of a 100 hard trials (a half of subjects started with the easy trials, and half of subjects started with the hard trials). In the mixed treatment, the sequence is randomized. 
+
+
+# Data Analasis
+
+## Cleaning Data
+
+Subjects 8 and 34 are removed from the data set. They reported confidences that are abnormally high and constant, showing they did not report confidence truthfully. Subject 13 seems to have given up in the second half of the experiment where he reported .5 all the time, while he was reporting confidences between .9 and 1 at the beginning. 
+
+I create the variable 'strength', which captures the strength of stimulus. 
+
+The variable 'half' is a binary variable which takes value 0 over the first 100 trials.
+
+
+```{r}
+df <- df[df$sujet!=8 & df$sujet!=34 & df$sujet!=13,]
+df$strength <- 1 - df$hard
+names(df)[names(df) == "conf"] <- "confidence"
+names(df)[names(df) == "sujet"] <- "subject"
+names(df)[names(df) == "stimuli"] <- "stimulus"
+df <- df[c('subject','treatment', 'trial', 'accuracy', 'confidence', 'strength', 'mixed' )]
+df$half <- df$trial>100
+
+```
+
+
+## Effect of the treatment on the EGP.
+
+To the extent that we will be comparing confidence across treatment, we must check the EGP is not affected by the treatment. This could happen if different sequencing had an impact on subjects' focus or fatigue. 
+
+The first figure shows how the average accuracy changes from the first 100 trials to the last 100 trials across treatments. The accuracy stands for a subject's observed probability of guessing the true circle. The average accuracy seems to behave as we would expect. In the separated treatment, the average accuracy does not depend on the order in which stimuli are presented. Similarly, the average accuracy in the mixed treatment does not change from the first 100 trials to the last 100. 
+
+
+```{r}
+data <- sapply(split(df$accuracy,interaction(df$treatment,df$half)), 
+               function(x) CI(x))
+data <- data.frame(upper=data[1,],mean=data[2,],lower=data[3,])
+data$half <- c("First 100 Trials","First 100 Trials","First 100 Trials",
+               "Last 100 Trials","Last 100 Trials","Last 100 Trials")
+data$treatment <- c("Weak-Strong","Strong-Weak","Mixed","Weak-Strong","Strong-Weak","Mixed")
+
+
+ci <- ggplot(data, aes(x = half, y = mean, ymin = lower,
+ymax = upper, colour = treatment))
+ci + geom_pointrange(position=position_dodge(width=.2)) + labs(colour = "Treatment",x="",y="Average Accuracy", title = "Average Accuracy Evolution")
+```
+
+
+However, if we compare the average accuracy between separated and mixed treatment over the whole experiment, we notice a significant difference. The average accuracy is .717 in the separated treatment and .701 in the mixed treatment. These two average accuracies are significantly different at a level of 10% but not at a level of 5% (the p-value is .09). So, it may well be the case that the sequencing of stimulus strength affects accuracy. This is a problem for the rest of the analysis as the tests presented here rest on the assumption that the two treatments are equivalent in terms of accuracy.
+
+
+```{r}
+t.test(df$accuracy[df$mixed==0],df$accuracy[df$mixed==1])
+
+```
+
+
+
+ 
+
+
+
+
+## Effect of the treatment on the average confidence.
+
+
+The second figure shows how average confidence changes from the first 100 trials to the last 100 trials across treatments. 
+
+The striking feature of this figure is that the stimulus strength has no effect on the average confidence among the first 100 trials. Subjects seem to randomly pick an anchor on the confidence scale and report variation around this anchor. The average subject picked the middle point of the scale as an anchor. This result confirms previous evidence that confidence reports are hardly comparable across subjects (Massoni & Roux, 2017).
+
+On the other hand, confidences do depend on stimulus strength in the last 100 trials. Subjects who faced weak stimuli in the 100 trials significantly rose their confidence levels when faced with strong stimuli. Similarly, subjects who faced strong stimuli in the first 100 trials significantly lowered their confidence when faced with weak stimuli. This result confirms that confidence reporting is sensitive to stimulus strength wihtin subject. 
+
+
+
+
+
+
+
+```{r}
+
+data <- sapply(split(df$confidence,interaction(df$treatment,df$half)),
+               function(x) CI(x))
+
+data <- data.frame(upper=data[1,],mean=data[2,],lower=data[3,])
+
+data$half <- c("First 100 Trials","First 100 Trials",
+               "First 100 Trials","Last 100 Trials","Last 100 Trials",
+               "Last 100 Trials")
+
+data$treatment <- c("Hard-Easy","Easy-Hard","Mixed","Hard-Easy",
+                    "Easy-Hard","Mixed")
+
+
+ci <- ggplot(data, aes(x = half, y = mean, ymin = lower, 
+                       ymax = upper, colour = treatment))
+
+ci + 
+geom_pointrange(position=position_dodge(width=.2)) +
+labs(colour="Treatment",x="", y="Average Confidence",
+     title = "Average Confidence Evolution") 
+
+
+
+```
+
+
+
+## Testing the Bayesian Model.
+
+Suppose that the subjects apply the Bayesian confidence model in both treatments. Assume that interpretation curves are perfectly adjusted to the EGP in the separated treatment. In the mixed treatment, their interpretation curve is adjusted to the mixture of the two EGPs. 
+
+In the mixed treatment, confidences are larger among easy trials than hard trials because the evidence pieces produced by the strong EGP are stronger on average than those produced by the weak EGP. 
+
+In the separated treatment, the same force pushes confidences up among easy trial. On top of it, each piece of evidence gives rise to a higher confidence when it is produced by the strong EGP than when it is produced by the weak EGP as subjects use a steeper interpretation curve under the strong EGP.
+
+As a result, confidences should differ more between easy and hard trials in the separated treatment than in the mixed treatment. In other words, they should contain more information about the stimulus strength in the separatd treatment than in the mixed treatment. 
+
+This claim must be mitigated by the fact that subjects need to learn about the EGP. In particular, when subjects switch from a series of easy trials to a series of hard trials, they will need some time to realize that this change occured. This means that among the first trials after this change, subjects will use the wrong interpretation curve. If the transition went from hard trials to easy trials, they will for a while interpret evidence produced by the strong EGP using the weak intepretation curve. As a result, the confidence push will be undermined. 
+
+So, if the learning phase is long enough, confidences may not look different across treatments.
+
+
+### Measure of the difference in confidence between easy and hard trials. 
+
+We want to be able to tell whether the difference between the confidence distribution among easy trials and the confidence distribution among hard trials in larger in the separated than in the mixed treatment.  
+
+Our measure of difference between these two confidence distributions is the area under the ROC curve (AUC). The AUC measures the probability that a randomly chosen confidence among easy trials is larger than a randomly chosen confidence among easy trials. This measure only uses the rank between confidence reports and disregards their cardinal value. we compute the AUC at the individual level and then average them across subject in each treatment. 
+
+The reason why use a measure only based on the rank and we apply it within subject is that different subjects use the confidence scale in different ways. It is possible for instance that a subject's mean confidence difference between easy and hard trials be great because this subject only used the confidence reports .5 and 1.  
+
+We average the individual AUCs in each treatment using a random effect model. We use a random effect model because we know different subjects have different AUCs, either because they have a better visual system or because they have a better metacognition.  
+
+
+
+
+
+
+
+
+
+
+### Comparison of the AUCs across treatment.
+
+We compare the average individual ROC AUC across treatment over various samples of trials. Because of the computation of Bayesian confidence rests on a learning phase that blurs the comparison, the Bayesian model can only induce a significant difference in the average ROC AUC across treatment after some adjustment time. We therefore study the evolution of the average ROC AUC across treatment in the following way: 
+
+We cut our sample in two phases. The first phase includes the first 100 trials and the second phase includes the last 100 trials. We then take a sample composed of the 40 first trials of each period. For each subject, we compute the ROC AUC over this sample of 80 trials. 
+
+We then average these ROC AUC across subjects within each treatment using a Random Effects model. The standard error of each AUC is computed using DeLong et al. method. The AUC estimate are asymptotically normally distributed according to De Long et al. 
+
+We repeat the operation for the next 40 trials of each period, i.e. for the trials number 2 to 41 and 102 to 141. And so on and so forth till. 
+
+The following plot shows the result of this procedure. Based on this we cannot accept the Bayesian model because the AUCs are never signicantly different, but the upward trend of the AUC in the separated treatment makes us wonder whether a significant difference would have been obtained with a longer experiment. 
+
+```{r}
+#Note: Bootstrap and Delong method for the confidence intervals of the ROC AUC give the same results. 
+result_sep <- data.frame()
+result_mix <- data.frame()
+
+for (i in 1:60) {
+  
+df_moving <- df[(df$trial %in% i:(40+i) ) | (df$trial %in% (100+i) : (140+i) ),]
+
+df_mix <- df_moving[df_moving$mixed==1,]
+df_sep <- df_moving[df_moving$mixed==0,]
+
+auc_sep <- sapply(split(df_sep,df_sep$subject),function(x) auc(roc(x$strength,x$confidence,method="delong")))
+auc_mix <- sapply(split(df_mix,df_mix$subject),function(x) auc(roc(x$strength,x$confidence,method="delong")))
+
+var_auc_sep <- sapply(split(df_sep,df_sep$subject),function(x) var(roc(x$strength,x$confidence,method="delong")))
+var_auc_mix <- sapply(split(df_mix,df_mix$subject),function(x) var(roc(x$strength,x$confidence,method="delong")))
+
+res_sep <- rma.uni(auc_sep, var_auc_sep)
+res_mix <- rma.uni(auc_mix, var_auc_mix)
+
+result_sep <- rbind(result_sep,  res_sep[c(6,1,7)])
+result_mix <- rbind(result_mix,  res_mix[c(6,1,7)])
+
+}
+
+result_moving <- rbind(result_mix,result_sep)
+names(result_moving) <- c("lower","mean","upper")
+result_moving$treatment <- rep(c("mixed","separated"),each=60)
+result_moving$period <- rep(1:60,2)
+
+  
+ci <- ggplot(result_moving, aes(x = period, y = mean, ymin = lower,
+ymax = upper, colour = treatment))
+
+ci + geom_pointrange(position=position_dodge(width=.3)) + 
+  labs(colour = "Treatment",x="Period",y="Average ROC AUC", 
+       title = "Evolution of the ROC AUC \n for Stimulus Strength") 
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Test of the Persitent Confidence model.
+
+If subjects use the persistent confidence model, then we should observe a autocorrelation in their confidence reports which does not fade away as the experiment goes. The Bayesian also induces some auto-correlation during the learning phase but it should disapear after a while. 
+
+
+
+#Discussion
+
+Our results call to reject the hypothesis that subjects use the evidence distribution to interpret new evidence. On the other hand, it might well be the case that we did not leave enough time to our subjects to learn the distribution. 
+
+There is another way in which to check test the Bayesian model vs. the Naive model. Instead of manipulating the stimulus strength, we could have manipulated the proportion of trials where the left circles is the correct answer. In a treatment where the left circle is more likely to be the correct answer, the decision criterion should change, and confidences should be different conditional on the left circle and the right circle. 
+
+ 
+
+
+
+
+
+
